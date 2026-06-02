@@ -13,23 +13,39 @@ services:
       - minio_data:/data
     networks:
       - lake
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
 
   mc:
     image: minio/mc:latest
     container_name: mc
     depends_on:
-      - minio
+      minio:
+        condition: service_healthy
+    volumes:
+      - ./files:/files:ro
+    networks:
+      - lake
     entrypoint: >
       /bin/sh -c "
-      sleep 3;
+      set -e;
       mc alias set local http://minio:9000 minioadmin minioadmin123;
       mc mb -p local/data || true;
       mc mb -p local/reports || true;
-      mc ls local;
-      tail -f /dev/null
+      mc cp /files/Ref.xlsx local/data/ref/Ref.xlsx;
+      mc cp /files/REF_CBS_SMS2.csv local/data/REF_SMS/REF_CBS_SMS2.csv;
+      mc stat local/data/REF_SMS/REF_CBS_SMS2.csv;
+      mc stat local/data/ref/Ref.xlsx;
+      echo 'seed done';
       "
-    networks:
-      - lake
+    healthcheck:
+      test: ["CMD-SHELL", "mc alias set local http://minio:9000 minioadmin minioadmin123 >/dev/null 2>&1 && mc stat local/data/REF_SMS/REF_CBS_SMS2.csv >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
 
   spark-master:
     build: ./spark
@@ -63,6 +79,31 @@ services:
       - ./jobs:/opt/spark/jobs
     networks:
       - lake
+
+  spark-job:
+    build: ./spark
+    container_name: spark-job
+    restart: "no"
+    depends_on:
+      minio:
+        condition: service_healthy
+      mc:
+        condition: service_completed_successfully
+      spark-master:
+        condition: service_started
+      spark-worker:
+        condition: service_started
+    environment:
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin123
+    volumes:
+      - ./jobs:/opt/spark/jobs
+    networks:
+      - lake
+    command: >
+      /opt/spark/bin/spark-submit
+      --master spark://spark-master:7077
+      /opt/spark/jobs/reports_jobs.py 
 
 volumes:
   minio_data:
