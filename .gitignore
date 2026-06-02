@@ -5,7 +5,7 @@ __pycache__/
 
 # C extensions
 *.so
-
+REF_CBS_SMS2.csv
 # Distribution / packaging
 .Python
 build/
